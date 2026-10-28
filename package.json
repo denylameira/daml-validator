@@ -1,13 +1,13 @@
 {
   "name": "daml-validator",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "private": true,
   "type": "module",
   "engines": { "node": ">=20" },
   "scripts": { "start": "node server.mjs" },
   "dependencies": {
-    "@modelcontextprotocol/server": "latest",
-    "@modelcontextprotocol/node": "latest",
+    "@modelcontextprotocol/sdk": "latest",
+    "express": "latest",
     "zod": "latest"
   }
 }
