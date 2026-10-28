@@ -167,6 +167,102 @@ const handler = createMcpHandler(() => buildServer());
 const mcpNode = toNodeHandler(handler);
 const port = Number(process.env.PORT || 3000);
 
+
+async function parseMcpResponse(res) {
+  const text = await res.text();
+  const ct = res.headers.get('content-type') || '';
+  if (!res.ok) throw new Error('HTTP ' + res.status + ': ' + text.slice(0, 500));
+  if (ct.includes('text/event-stream')) {
+    const dataLines = text.split(/\r?\n/).filter(line => line.startsWith('data:'));
+    for (const line of dataLines) {
+      const payload = line.slice(5).trim();
+      if (!payload) continue;
+      try { return JSON.parse(payload); } catch {}
+    }
+    throw new Error('No JSON data event in SSE response: ' + text.slice(0, 500));
+  }
+  return JSON.parse(text);
+}
+
+async function mcpPost(body, sessionId) {
+  const headers = {
+    'content-type': 'application/json',
+    'accept': 'application/json, text/event-stream'
+  };
+  if (sessionId) headers['mcp-session-id'] = sessionId;
+  const res = await fetch('http://127.0.0.1:' + port + '/mcp', {
+    method: 'POST',
+    headers,
+    body: JSON.stringify(body)
+  });
+  return { payload: await parseMcpResponse(res), sessionId: res.headers.get('mcp-session-id') || sessionId };
+}
+
+async function runSelfTest() {
+  const init = await mcpPost({
+    jsonrpc: '2.0',
+    id: 1,
+    method: 'initialize',
+    params: {
+      protocolVersion: '2025-03-26',
+      capabilities: {},
+      clientInfo: { name: 'daml-selftest', version: '1.0' }
+    }
+  });
+
+  const sid = init.sessionId;
+  await mcpPost({
+    jsonrpc: '2.0',
+    method: 'notifications/initialized',
+    params: {}
+  }, sid).catch(() => null);
+
+  const listed = await mcpPost({
+    jsonrpc: '2.0',
+    id: 2,
+    method: 'tools/list',
+    params: {}
+  }, sid);
+
+  const names = listed.payload?.result?.tools?.map(t => t.name) || [];
+  if (!names.includes('validate_lyric') || !names.includes('health')) {
+    throw new Error('tools/list missing expected tools: ' + JSON.stringify(names));
+  }
+
+  const premise = 'Months after a relationship ends, Maya realizes she still remembers tiny things about him automatically — how he took his coffee, where he liked to sit, what he never ordered — while no longer knowing important things about his life now. The emotional strength comes from that contrast: former intimacy versus present distance. It is not about wanting him back; it is about how useless little details can stay in the body long after the person is gone.';
+  const badLyric = `Somehow I know the little things.
+There's so much I don't know.
+I remember the things you'd never order.
+I don't need to know.`;
+
+  const called = await mcpPost({
+    jsonrpc: '2.0',
+    id: 3,
+    method: 'tools/call',
+    params: {
+      name: 'validate_lyric',
+      arguments: {
+        premise,
+        lyric: badLyric,
+        forbidden_claims: [],
+        required_claims: []
+      }
+    }
+  }, sid);
+
+  const result = called.payload?.result?.structuredContent;
+  if (!result || result.pass !== false || result.violation_count < 3) {
+    throw new Error('validator did not fail closed as expected: ' + JSON.stringify(called.payload).slice(0, 2000));
+  }
+
+  console.log('MCP_SELFTEST_OK ' + JSON.stringify({
+    tools: names,
+    pass: result.pass,
+    violation_count: result.violation_count,
+    codes: result.violations.map(v => v.code)
+  }));
+}
+
 const server = http.createServer((req, res) => {
   if (req.url === '/health' && req.method === 'GET') {
     res.writeHead(200, { 'content-type': 'application/json' });
@@ -183,4 +279,5 @@ const server = http.createServer((req, res) => {
 
 server.listen(port, '0.0.0.0', () => {
   console.log('DAML validator listening on port ' + port);
+  setTimeout(() => runSelfTest().catch(err => console.error('MCP_SELFTEST_FAIL ' + (err?.stack || err))), 1000);
 });
