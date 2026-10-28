@@ -1,0 +1,36 @@
+name: MCP smoke test
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Health
+        run: |
+          set -euxo pipefail
+          curl -fsS --retry 5 --retry-delay 3 https://daml-validator.onrender.com/health
+
+      - name: MCP initialize
+        run: |
+          set -euxo pipefail
+          curl -i -sS --retry 5 --retry-delay 3 \
+            -X POST https://daml-validator.onrender.com/mcp \
+            -H 'Content-Type: application/json' \
+            -H 'Accept: application/json, text/event-stream' \
+            --data '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"daml-smoke","version":"1.0"}}}' \
+            | tee /tmp/init.txt
+          grep -E '"result"|event: message|data:' /tmp/init.txt
+
+      - name: MCP tools list
+        run: |
+          set -euxo pipefail
+          curl -i -sS --retry 5 --retry-delay 3 \
+            -X POST https://daml-validator.onrender.com/mcp \
+            -H 'Content-Type: application/json' \
+            -H 'Accept: application/json, text/event-stream' \
+            --data '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}' \
+            | tee /tmp/tools.txt
+          grep -E 'validate_lyric|health' /tmp/tools.txt
